@@ -38,6 +38,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.runner.types import (
+    DailyRunnerArguments,
     RunnerArguments,
     SmallWebRTCRunnerArguments,
     WebSocketRunnerArguments,
@@ -47,6 +48,7 @@ from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.services.gradium.tts import GradiumTTSService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.transports.daily.transport import DailyParams, DailyTransport
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
@@ -488,6 +490,20 @@ async def bot(runner_args: RunnerArguments):
         krisp_filter = None
 
     match runner_args:
+        case DailyRunnerArguments():
+            # Pipecat Cloud starts a session into a Daily room (this is the path
+            # Cekura's automated testing uses). Join that room as the bot. Uses
+            # run_bot's default 16 kHz in / 24 kHz out, same as the WebRTC path.
+            transport = DailyTransport(
+                runner_args.room_url,
+                runner_args.token,
+                "Field & Flower",
+                params=DailyParams(
+                    audio_in_enabled=True,
+                    audio_in_filter=krisp_filter,
+                    audio_out_enabled=True,
+                ),
+            )
         case SmallWebRTCRunnerArguments():
             webrtc_connection: SmallWebRTCConnection = runner_args.webrtc_connection
 

@@ -26,6 +26,7 @@ from pipecat.frames.frames import (
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
+from pipecat.audio.utils import create_stream_resampler
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.settings import STTSettings
 from pipecat.services.stt_service import WebsocketSTTService
@@ -142,6 +143,13 @@ class NVidiaWebSocketSTTService(WebsocketSTTService):
         # cleared once the matching final transcript arrives.
         self._waiting_for_final: bool = False
 
+        # The ASR server requires a fixed 16 kHz mono PCM stream, but the
+        # transport can deliver a different rate (e.g. 8 kHz on the Twilio
+        # telephony path). This stateful resampler converts incoming audio to
+        # self.sample_rate before it is buffered or sent. Skipped when the
+        # rates already match (e.g. the 16 kHz WebRTC/Daily path).
+        self._input_resampler = create_stream_resampler()
+
     def can_generate_metrics(self) -> bool:
         """Check if this service can generate processing metrics."""
         return True
@@ -255,11 +263,20 @@ class NVidiaWebSocketSTTService(WebsocketSTTService):
             )
             return
 
+        # Resample to the rate the ASR server expects (self.sample_rate). The
+        # transport may hand us a different rate — notably 8 kHz on the Twilio
+        # path — and the server returns no transcript for off-rate audio.
+        audio = frame.audio
+        if frame.sample_rate != self.sample_rate:
+            audio = await self._input_resampler.resample(
+                audio, frame.sample_rate, self.sample_rate
+            )
+
         if self._user_speaking:
-            await self.process_generator(self.run_stt(frame.audio))
+            await self.process_generator(self.run_stt(audio))
             return
 
-        self._audio_ring += frame.audio
+        self._audio_ring += audio
         if self._preroll_bytes > 0 and len(self._audio_ring) > self._preroll_bytes:
             del self._audio_ring[: -self._preroll_bytes]
 
