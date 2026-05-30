@@ -27,7 +27,6 @@ from dotenv import load_dotenv
 from loguru import logger
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import EndTaskFrame, FunctionCallResultProperties, LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -52,9 +51,6 @@ from pipecat.transports.daily.transport import DailyParams, DailyTransport
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
-from pipecat.turns.user_start.min_words_user_turn_start_strategy import (
-    MinWordsUserTurnStartStrategy,
-)
 from pipecat.turns.user_turn_strategies import FilterIncompleteUserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
@@ -411,21 +407,12 @@ async def run_bot(
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            # Tuned for noisy environments. Higher confidence + min_volume make the
-            # VAD require a louder, more speech-like signal before it fires, so
-            # background babble is less likely to register. start_secs makes speech
-            # persist briefly before a turn opens, filtering short noise bursts.
-            vad_analyzer=SileroVADAnalyzer(
-                params=VADParams(confidence=0.8, min_volume=0.7, start_secs=0.3),
-            ),
-            # Interruption robustness: while the bot is speaking, only treat input
-            # as a real interruption once the STT has produced at least 3 words.
-            # Babble rarely transcribes into several coherent words, so the bot
-            # talks through it. When the bot is idle, a single word still starts a
-            # turn, so normal back-and-forth stays responsive.
-            user_turn_strategies=FilterIncompleteUserTurnStrategies(
-                start=[MinWordsUserTurnStartStrategy(min_words=3)],
-            ),
+            # Default VAD + turn-taking. Krisp denoising runs on Pipecat Cloud, so
+            # the bot no longer needs babble-robustness tuning here — and the
+            # min_words=3 gate could strand a short backchannel that lands on a
+            # tool result, leaving the bot silent.
+            vad_analyzer=SileroVADAnalyzer(),
+            user_turn_strategies=FilterIncompleteUserTurnStrategies(),
         ),
     )
 
