@@ -16,5 +16,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --no-dev
 
 # Copy the application code
+# bot.py is a symlink -> bot-nemotron.py; copy the real source so the link resolves
+COPY ./bot-nemotron.py bot-nemotron.py
 COPY ./bot.py bot.py
 COPY ./mock_backend.py mock_backend.py
+COPY ./nemotron_llm.py nemotron_llm.py
+COPY ./nvidia_stt.py nvidia_stt.py
