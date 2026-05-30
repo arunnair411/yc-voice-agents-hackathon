@@ -16,9 +16,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --no-dev
 
 # Copy the application code
-# bot.py is a symlink -> bot-nemotron.py; copy the real source so the link resolves
-COPY ./bot-nemotron.py bot-nemotron.py
+# bot.py is a symlink -> bot-healthcare.py; copy the real sources so the link resolves
+COPY ./bot-healthcare.py bot-healthcare.py
+COPY ./healthcare_store.py healthcare_store.py
+COPY ./healthcare_data.json healthcare_data.json
 COPY ./bot.py bot.py
+# Field & Flower bot retained as an alternate entrypoint
+COPY ./bot-nemotron.py bot-nemotron.py
 COPY ./mock_backend.py mock_backend.py
 COPY ./nemotron_llm.py nemotron_llm.py
 COPY ./nvidia_stt.py nvidia_stt.py
