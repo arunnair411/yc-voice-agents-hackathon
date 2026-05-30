@@ -77,6 +77,7 @@ from pipecat.turns.user_turn_strategies import FilterIncompleteUserTurnStrategie
 from pipecat.workers.runner import WorkerRunner
 
 from healthcare_backend import DEPARTMENTS, PATIENTS
+from healthcare_rag import get_health_context, initialize_health_rag
 
 load_dotenv(override=True)
 
@@ -473,6 +474,33 @@ async def run_bot(
             ),
         })
 
+    async def lookup_clinic_info(params: FunctionCallParams, question: str) -> None:
+        """Look up general, non-diagnostic clinic information to answer a
+        patient's question — clinic policies, appointment prep, prescription
+        processing times, insurance/billing, lab result access, telehealth, and
+        general medication guidance.
+
+        Use this whenever the caller asks a general "how does X work" or
+        "what's your policy on Y" question. Read the returned information back
+        in your own words. If the result is empty or the question is clinical
+        (diagnosis, dosing changes, evaluating symptoms), do NOT guess — offer
+        to transfer to a registered nurse instead.
+
+        Args:
+            question: The patient's question in natural language.
+        """
+        context = await get_health_context(question)
+        if not context:
+            await params.result_callback({
+                "found": False,
+                "note": (
+                    "No matching clinic information. If this is a clinical "
+                    "question, offer to transfer to a registered nurse."
+                ),
+            })
+            return
+        await params.result_callback({"found": True, "information": context})
+
     async def end_call(params: FunctionCallParams) -> None:
         """End the call. Only call this AFTER you have said goodbye in the
         same turn.
@@ -495,6 +523,7 @@ async def run_bot(
         schedule_appointment,
         medication_checkin,
         record_medication_taken,
+        lookup_clinic_info,
         transfer_to_nurse,
         end_call,
     ]
@@ -542,10 +571,21 @@ Accept free voice response. Map it to one of:
   - medication_checkin → call medication_checkin
   - lab_results → transfer to lab department
   - billing → transfer to billing department
+  - general question (policies, appointment prep, insurance accepted, refill
+    timing, telehealth, accessing lab results, general medication guidance)
+    → call lookup_clinic_info and answer from the returned information
   - nurse / unclear → call transfer_to_nurse
 
 If the caller is unclear after 1 attempt, call get_reason_menu and read the numbered options.
 If a caller presses or says a digit (1–6), map it to the menu options returned by get_reason_menu.
+
+## Answering general questions (knowledge base)
+For "how does X work" or "what's your policy on Y" questions, use lookup_clinic_info
+and answer from its result in your own words. NEVER answer clinical questions
+(diagnosis, whether to change a dose, evaluating symptoms) from the knowledge base —
+for those, and whenever lookup_clinic_info returns nothing, offer to transfer to a
+registered nurse. Identity should still be verified before discussing a patient's
+specific records, but general policy questions can be answered without verification.
 
 ### Step 6: Service flows
 
@@ -683,6 +723,11 @@ Never call end_call without a spoken goodbye in the same turn.
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
         await worker.cancel()
+
+    # Build the clinic knowledge-base vector store before the call starts so
+    # lookup_clinic_info responds without a cold-start delay. Loads models off
+    # the event loop; safe to call repeatedly (no-op once initialized).
+    await initialize_health_rag()
 
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)

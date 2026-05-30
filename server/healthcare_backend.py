@@ -131,3 +131,116 @@ DEPARTMENTS = {
         "hours": "24 hours, 7 days a week",
     },
 }
+
+# ---------------------------------------------------------------------------
+# Knowledge base for RAG retrieval.
+#
+# These are GENERAL, NON-DIAGNOSTIC informational entries: clinic policies,
+# appointment prep, medication general guidance, insurance/billing FAQ. The
+# voice agent retrieves over these so it can answer common patient questions
+# with authoritative shop-specific info instead of hallucinating. Anything
+# clinical (diagnosis, dosing changes, symptom evaluation) must still be
+# routed to a registered nurse — never answered from this KB alone.
+#
+# Swap this list for a real document store / vector DB in production.
+# ---------------------------------------------------------------------------
+
+KNOWLEDGE_BASE = [
+    {
+        "title": "Appointment cancellation and rescheduling policy",
+        "category": "appointments",
+        "content": (
+            "Appointments can be cancelled or rescheduled up to 24 hours in "
+            "advance at no charge. Cancellations within 24 hours, or missed "
+            "appointments, may incur a 25 dollar no-show fee. You can reschedule "
+            "by phone or through the patient portal."
+        ),
+    },
+    {
+        "title": "What to bring to your appointment",
+        "category": "appointments",
+        "content": (
+            "Please bring a photo ID, your insurance card, a list of your current "
+            "medications and dosages, and any relevant medical records or referral "
+            "paperwork. Arrive 15 minutes early to complete check-in."
+        ),
+    },
+    {
+        "title": "Prescription refill processing time",
+        "category": "prescriptions",
+        "content": (
+            "Routine prescription refills are processed within 24 to 48 hours. "
+            "If your prescription has no refills remaining, it must be approved by "
+            "your provider, which can take up to 3 business days. Controlled "
+            "substances require an in-person or telehealth visit before refill."
+        ),
+    },
+    {
+        "title": "Taking medications with food",
+        "category": "medications",
+        "content": (
+            "General guidance: some medications are best taken with food to reduce "
+            "stomach upset, while others should be taken on an empty stomach. "
+            "Always follow the directions on your prescription label. For specific "
+            "questions about your medication, a registered nurse or pharmacist can help."
+        ),
+    },
+    {
+        "title": "Missed medication dose",
+        "category": "medications",
+        "content": (
+            "General guidance: if you miss a dose, take it as soon as you remember "
+            "unless it is almost time for your next dose. Do not double up to make "
+            "up for a missed dose. For medication-specific concerns, please speak "
+            "with a registered nurse."
+        ),
+    },
+    {
+        "title": "Insurance plans accepted",
+        "category": "billing",
+        "content": (
+            "We accept most major insurance plans including Medicare, Medicaid, "
+            "Blue Cross Blue Shield, Aetna, Cigna, and UnitedHealthcare. Coverage "
+            "for specific services varies by plan. Contact our billing department "
+            "to verify your coverage before a visit."
+        ),
+    },
+    {
+        "title": "Paying your bill",
+        "category": "billing",
+        "content": (
+            "Bills can be paid online through the patient portal, by phone with the "
+            "billing department, or by mail. We offer interest-free payment plans "
+            "for balances over 200 dollars. Financial assistance may be available "
+            "for qualifying patients."
+        ),
+    },
+    {
+        "title": "Accessing lab and test results",
+        "category": "lab",
+        "content": (
+            "Most lab results are available in the patient portal within 2 to 5 "
+            "business days. Your provider will contact you about any results that "
+            "need follow-up. For urgent results, call the lab line during business hours."
+        ),
+    },
+    {
+        "title": "Telehealth and virtual visits",
+        "category": "appointments",
+        "content": (
+            "Virtual visits are available for many primary care and follow-up "
+            "appointments. You will need a smartphone, tablet, or computer with a "
+            "camera. A link is sent to your portal before the visit. Not all "
+            "services are eligible for telehealth."
+        ),
+    },
+    {
+        "title": "Clinic hours and after-hours care",
+        "category": "general",
+        "content": (
+            "The main clinic is open Monday through Friday. For urgent but "
+            "non-emergency needs after hours, our nurse advice line is available "
+            "24 hours a day. For any life-threatening emergency, call 9-1-1."
+        ),
+    },
+]
