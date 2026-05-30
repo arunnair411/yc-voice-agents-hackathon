@@ -89,8 +89,8 @@ async def get_call_info(call_sid: str) -> dict:
     url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls/{call_sid}.json"
     try:
         auth = aiohttp.BasicAuth(account_sid, auth_token)
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, auth=auth) as response:
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.get(url, auth=auth) as response:
                 if response.status != 200:
                     return {}
                 data = await response.json()
@@ -196,11 +196,13 @@ async def run_bot(
         provided_digits = _digits(provided_dob)
 
         # Accept if all 8 digits match, or if the 4-digit year + month/day appear
-        name_ok = provided_name.strip().lower() in patient["name"].lower()
-        dob_ok = (
-            provided_digits == stored_digits
-            or (len(provided_digits) >= 6 and provided_digits in stored_digits)
-        )
+        # Full-name match: all words provided must appear in the stored name
+        provided_words = provided_name.strip().lower().split()
+        stored_lower = patient["name"].lower()
+        name_ok = len(provided_words) >= 2 and all(w in stored_lower for w in provided_words)
+
+        # DOB must match exactly (all 8 digits: YYYYMMDD)
+        dob_ok = len(provided_digits) == 8 and provided_digits == stored_digits
 
         if name_ok and dob_ok:
             session["verified_patient"] = patient
@@ -331,13 +333,14 @@ async def run_bot(
             })
             return
 
+        med["refills_remaining"] -= 1
         ref_id = f"RX-{random.randint(100000, 999999)}"
         await params.result_callback({
             "ok": True,
             "refill_id": ref_id,
             "medication": med["name"],
             "dose": med["dose"],
-            "refills_remaining_after": med["refills_remaining"] - 1,
+            "refills_remaining_after": med["refills_remaining"],
             "ready_in": "24 to 48 hours",
         })
 
