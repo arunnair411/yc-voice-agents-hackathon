@@ -4,24 +4,24 @@
 # SPDX-License-Identifier: BSD 2-Clause License
 #
 
-"""HealthLine — healthcare voice agent.
+"""HealthLine — healthcare voice agent (JSON-backed, no-RAG variant).
+
+Why no RAG: the RAG variant loaded a ~45 MB embedding model plus a
+cross-encoder reranker (and torch) before a call could start. That made calls
+slow to connect and could leave the line silent while models warmed up. This
+variant replaces all of that with a small JSON dataset loaded ONCE per call
+session and answered with fast in-memory keyword scoring. Conclusions from the
+call (medication adherence, refill decrements, a call-log entry) are written
+back to the JSON file when the call ends.
 
 Call flow:
-  1. Emergency check — if medical emergency, instruct caller to hang up and
-     call 911 before anything else.
-  2. Caller ID lookup — if phone matches a known patient, offer to confirm
-     identity rather than asking from scratch.
-  3. Identity verification — confirm name + date of birth (or MRN).
-  4. Reason for call — free voice OR DTMF fallback menu:
-       1 = Prescription refill
-       2 = Appointment scheduling
-       3 = Medication check-in / adherence
-       4 = Lab / test results
-       5 = Billing question
-       6 = Speak to a nurse
-       0 = Repeat menu
-  5. Service-specific flows (refills, appointments, med check-in).
-  6. Warm transfer to registered nurse if needed.
+  1. Emergency check — if medical emergency, instruct caller to call 911 first.
+  2. Caller ID lookup — match phone to a known patient.
+  3. Calling for self / someone else.
+  4. Identity verification — name + exact date of birth before any PHI.
+  5. Reason for call — free voice OR DTMF fallback menu (1–6, 0 repeats).
+  6. Service flows: refills, appointments, medication check-in, clinic info.
+  7. Warm transfer to a registered nurse when needed.
 
 Robustness:
   - Every question tracks a no-response / unclear-response counter.
@@ -76,8 +76,13 @@ from pipecat.turns.user_start.min_words_user_turn_start_strategy import (
 from pipecat.turns.user_turn_strategies import FilterIncompleteUserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
-from healthcare_backend import DEPARTMENTS, PATIENTS
-from healthcare_rag import get_health_context, initialize_health_rag
+from healthcare_store import (
+    find_patient_by_name,
+    find_patient_by_phone,
+    load_data,
+    persist_call_results,
+    search_knowledge,
+)
 
 load_dotenv(override=True)
 
@@ -107,17 +112,30 @@ async def run_bot(
     audio_in_sample_rate: int = 16000,
     audio_out_sample_rate: int = 24000,
 ):
-    logger.info("Starting healthcare bot")
+    logger.info("Starting healthcare bot (JSON-backed)")
+
+    # Load the dataset ONCE for this call session. Everything below reads from
+    # this in-memory dict — no per-turn disk reads, no model loading.
+    data = load_data()
 
     # Per-call session state
     session: dict = {
-        "verified_patient": None,       # patient dict once identity is confirmed
-        "calling_for_self": None,       # True/False
-        "caller_name": None,            # name if calling for someone else
-        "selected_area": None,          # department key
-        "no_response_counts": {},       # step -> int, tracks retries per step
+        "verified_patient": None,   # reference into data["patients"][phone]
+        "calling_for_self": None,
+        "caller_name": None,
+        "selected_area": None,
+        "no_response_counts": {},
         "transfer_requested": False,
+        # Accumulated for write-back at end of call:
+        "events": [],               # human-readable log of what happened
+        "persisted": False,         # guard against double write-back
     }
+
+    departments = data.get("departments", {})
+
+    def _log_event(text: str) -> None:
+        logger.info(f"[call event] {text}")
+        session["events"].append(text)
 
     # -----------------------------------------------------------------------
     # Tools
@@ -133,6 +151,7 @@ async def run_bot(
             is_emergency: True if the caller indicates this is an emergency.
         """
         if is_emergency:
+            _log_event("Caller reported a medical emergency; directed to 911.")
             await params.result_callback({
                 "action": "end_after_911",
                 "message": (
@@ -145,10 +164,11 @@ async def run_bot(
 
     async def lookup_patient_by_phone(params: FunctionCallParams) -> None:
         """Look up whether the calling phone number matches a patient on file.
-        Call this automatically after emergency check. Returns patient name if
-        found, so the bot can ask 'Is this [name]?' instead of asking from scratch.
+        Call this automatically after the emergency check. Returns the patient
+        name if found, so the bot can ask 'Is this [name]?' instead of asking
+        from scratch.
         """
-        patient = PATIENTS.get(from_number or "")
+        patient = find_patient_by_phone(data, from_number)
         if patient:
             await params.result_callback({
                 "found": True,
@@ -166,21 +186,16 @@ async def run_bot(
     ) -> None:
         """Verify a patient's identity by matching their stated name and date
         of birth against records. Must be called before any PHI is disclosed.
-        Accept flexible DOB formats — just pass what the caller said.
 
         Args:
             provided_name: Full name stated by the caller.
             provided_dob: Date of birth stated by the caller (any spoken format,
                 e.g. "March fourteenth nineteen seventy-eight" or "03/14/1978").
         """
-        # Try phone-based lookup first, then fall back to name search
-        patient = PATIENTS.get(from_number or "")
+        # Prefer the phone-matched record; fall back to a name search.
+        patient = find_patient_by_phone(data, from_number)
         if not patient:
-            # Search by name
-            for p in PATIENTS.values():
-                if provided_name.strip().lower() in p["name"].lower():
-                    patient = p
-                    break
+            patient = find_patient_by_name(data, provided_name)
 
         if not patient:
             await params.result_callback({
@@ -189,24 +204,23 @@ async def run_bot(
             })
             return
 
-        # Normalize DOB: extract digits and compare loosely
         def _digits(s: str) -> str:
             return "".join(c for c in s if c.isdigit())
 
-        stored_digits = _digits(patient["dob"])  # e.g. "19780314"
+        stored_digits = _digits(patient["dob"])  # YYYYMMDD, e.g. "19780314"
         provided_digits = _digits(provided_dob)
 
-        # Accept if all 8 digits match, or if the 4-digit year + month/day appear
-        # Full-name match: all words provided must appear in the stored name
-        provided_words = provided_name.strip().lower().split()
+        # Name: at least two words, all of which appear in the stored name.
+        provided_words = [w for w in provided_name.strip().lower().split() if w]
         stored_lower = patient["name"].lower()
         name_ok = len(provided_words) >= 2 and all(w in stored_lower for w in provided_words)
 
-        # DOB must match exactly (all 8 digits: YYYYMMDD)
+        # DOB must match exactly (all 8 digits).
         dob_ok = len(provided_digits) == 8 and provided_digits == stored_digits
 
         if name_ok and dob_ok:
             session["verified_patient"] = patient
+            _log_event(f"Identity verified for {patient['name']} ({patient['mrn']}).")
             await params.result_callback({
                 "verified": True,
                 "patient_name": patient["name"],
@@ -323,6 +337,7 @@ async def run_bot(
             return
 
         if med["refills_remaining"] == 0:
+            _log_event(f"Refill requested for {med['name']} — no refills left, sent for provider auth.")
             await params.result_callback({
                 "ok": False,
                 "reason": (
@@ -334,8 +349,10 @@ async def run_bot(
             })
             return
 
+        # Mutates the in-memory patient record; persisted to JSON at call end.
         med["refills_remaining"] -= 1
         ref_id = f"RX-{random.randint(100000, 999999)}"
+        _log_event(f"Refill {ref_id} for {med['name']} ({med['refills_remaining']} left).")
         await params.result_callback({
             "ok": True,
             "refill_id": ref_id,
@@ -383,6 +400,7 @@ async def run_bot(
             return
 
         conf = f"APT-{random.randint(100000, 999999)}"
+        _log_event(f"Appointment {conf} requested in {department} for {preferred_date}.")
         await params.result_callback({
             "ok": True,
             "confirmation": conf,
@@ -414,7 +432,8 @@ async def run_bot(
         taken_today: bool,
         taken_on_time: bool | None = None,
     ) -> None:
-        """Record that the patient has (or has not) taken a specific medication today.
+        """Record that the patient has (or has not) taken a specific medication
+        today. The result is written back to the JSON record at call end.
 
         Args:
             medication_name: Name of the medication.
@@ -426,15 +445,61 @@ async def run_bot(
             await params.result_callback({"ok": False})
             return
 
-        logger.info(
-            f"Medication adherence: patient={patient['mrn']} "
-            f"med={medication_name} taken={taken_today} on_time={taken_on_time}"
+        # Update last_taken on the matching med, and append an adherence entry.
+        med = next(
+            (m for m in patient["medications"]
+             if medication_name.lower() in m["name"].lower()),
+            None,
+        )
+        canonical_name = med["name"] if med else medication_name
+        if med and taken_today:
+            med["last_taken"] = str(date.today())
+
+        entry = {
+            "date": str(date.today()),
+            "medication": canonical_name,
+            "taken_today": taken_today,
+            "taken_on_time": taken_on_time,
+        }
+        patient.setdefault("adherence_log", []).append(entry)
+        _log_event(
+            f"Adherence: {canonical_name} taken={taken_today} on_time={taken_on_time}."
         )
         await params.result_callback({
             "ok": True,
             "recorded": True,
-            "medication": medication_name,
+            "medication": canonical_name,
             "taken_today": taken_today,
+        })
+
+    async def lookup_clinic_info(params: FunctionCallParams, question: str) -> None:
+        """Look up general, non-diagnostic clinic information to answer a
+        patient's question — clinic policies, appointment prep, prescription
+        processing times, insurance/billing, lab result access, telehealth, and
+        general medication guidance.
+
+        This searches the in-memory knowledge base with fast keyword scoring —
+        no models, no delay. Read the returned information back in your own
+        words. If nothing matches or the question is clinical (diagnosis, dosing
+        changes, evaluating symptoms), do NOT guess — offer to transfer to a
+        registered nurse instead.
+
+        Args:
+            question: The patient's question in natural language.
+        """
+        matches = search_knowledge(data, question, top_k=2)
+        if not matches:
+            await params.result_callback({
+                "found": False,
+                "note": (
+                    "No matching clinic information. If this is a clinical "
+                    "question, offer to transfer to a registered nurse."
+                ),
+            })
+            return
+        await params.result_callback({
+            "found": True,
+            "information": [{"title": m["title"], "content": m["content"]} for m in matches],
         })
 
     async def transfer_to_nurse(
@@ -450,56 +515,33 @@ async def run_bot(
         Args:
             department: Department to route to. Defaults to the patient's
                 registered department or 'general'.
-            reason: Brief reason for the transfer, spoken to the nurse.
-                Optional.
+            reason: Brief reason for the transfer, spoken to the nurse. Optional.
         """
+        verified = session.get("verified_patient")
         dept_key = (
             department
-            or (session["verified_patient"]["area"] if session["verified_patient"] else None)
+            or (verified["area"] if verified else None)
             or "general"
         ).lower()
 
-        dept = DEPARTMENTS.get(dept_key, DEPARTMENTS["general"])
+        dept = departments.get(dept_key) or departments.get("general", {
+            "display_name": "Patient Services",
+            "nurse_line": "",
+            "hours": "",
+        })
         session["transfer_requested"] = True
+        _log_event(f"Transfer to {dept['display_name']} — {reason or 'general inquiry'}.")
 
         await params.result_callback({
             "ok": True,
             "department": dept["display_name"],
-            "nurse_line": dept["nurse_line"],
-            "hours": dept["hours"],
+            "nurse_line": dept.get("nurse_line", ""),
+            "hours": dept.get("hours", ""),
             "reason": reason or "General patient inquiry",
             "message": (
-                f"Transferring you to {dept['display_name']}. "
-                f"Please hold for a moment."
+                f"Transferring you to {dept['display_name']}. Please hold for a moment."
             ),
         })
-
-    async def lookup_clinic_info(params: FunctionCallParams, question: str) -> None:
-        """Look up general, non-diagnostic clinic information to answer a
-        patient's question — clinic policies, appointment prep, prescription
-        processing times, insurance/billing, lab result access, telehealth, and
-        general medication guidance.
-
-        Use this whenever the caller asks a general "how does X work" or
-        "what's your policy on Y" question. Read the returned information back
-        in your own words. If the result is empty or the question is clinical
-        (diagnosis, dosing changes, evaluating symptoms), do NOT guess — offer
-        to transfer to a registered nurse instead.
-
-        Args:
-            question: The patient's question in natural language.
-        """
-        context = await get_health_context(question)
-        if not context:
-            await params.result_callback({
-                "found": False,
-                "note": (
-                    "No matching clinic information. If this is a clinical "
-                    "question, offer to transfer to a registered nurse."
-                ),
-            })
-            return
-        await params.result_callback({"found": True, "information": context})
 
     async def end_call(params: FunctionCallParams) -> None:
         """End the call. Only call this AFTER you have said goodbye in the
@@ -528,6 +570,32 @@ async def run_bot(
         end_call,
     ]
     tools = ToolsSchema(standard_tools=tool_functions)
+
+    def _persist_results() -> None:
+        """Write this call's conclusions back to the JSON file. Idempotent —
+        guarded so it runs at most once even if called from multiple hooks.
+        """
+        if session["persisted"]:
+            return
+        session["persisted"] = True
+
+        verified = session.get("verified_patient")
+        patient_updates = {}
+        if verified:
+            patient_updates[verified["mrn"]] = {
+                "medications": verified["medications"],
+                "adherence_log": verified.get("adherence_log", []),
+            }
+
+        call_record = {
+            "timestamp": str(date.today()),
+            "from_number": from_number,
+            "patient_mrn": verified["mrn"] if verified else None,
+            "calling_for_self": session.get("calling_for_self"),
+            "transferred": session.get("transfer_requested", False),
+            "events": session["events"],
+        }
+        persist_call_results(call_record, patient_updates or None)
 
     # -----------------------------------------------------------------------
     # System prompt
@@ -565,12 +633,12 @@ Before sharing any medical information, verify identity:
 
 ### Step 5: Reason for call
 Ask: "What can I help you with today?"
-Accept free voice response. Map it to one of:
+Accept a free voice response. Map it to one of:
   - prescription_refill → call request_prescription_refill
   - appointment (schedule/confirm/cancel) → call get_upcoming_appointments or schedule_appointment
   - medication_checkin → call medication_checkin
-  - lab_results → transfer to lab department
-  - billing → transfer to billing department
+  - lab_results → transfer to the lab department
+  - billing → transfer to the billing department
   - general question (policies, appointment prep, insurance accepted, refill
     timing, telehealth, accessing lab results, general medication guidance)
     → call lookup_clinic_info and answer from the returned information
@@ -578,14 +646,6 @@ Accept free voice response. Map it to one of:
 
 If the caller is unclear after 1 attempt, call get_reason_menu and read the numbered options.
 If a caller presses or says a digit (1–6), map it to the menu options returned by get_reason_menu.
-
-## Answering general questions (knowledge base)
-For "how does X work" or "what's your policy on Y" questions, use lookup_clinic_info
-and answer from its result in your own words. NEVER answer clinical questions
-(diagnosis, whether to change a dose, evaluating symptoms) from the knowledge base —
-for those, and whenever lookup_clinic_info returns nothing, offer to transfer to a
-registered nurse. Identity should still be verified before discussing a patient's
-specific records, but general policy questions can be answered without verification.
 
 ### Step 6: Service flows
 
@@ -610,36 +670,42 @@ specific records, but general policy questions can be answered without verificat
 
 **Transfer to nurse:**
 - Call transfer_to_nurse with the appropriate department.
-- Read the message from the result aloud.
-- Say a brief warm handoff line, then call end_call.
+- Read the message from the result aloud, then say a brief warm handoff line and call end_call.
 
-### Handling no-response / unclear input
+## Answering general questions (knowledge base)
+For "how does X work" or "what's your policy on Y" questions, use lookup_clinic_info
+and answer from its result in your own words. NEVER answer clinical questions
+(diagnosis, whether to change a dose, evaluating symptoms) from the knowledge base —
+for those, and whenever lookup_clinic_info returns nothing, offer to transfer to a
+registered nurse. General policy questions can be answered without identity
+verification; a patient's specific records require verification first.
+
+## Handling no-response / unclear input
 Whenever the caller does not respond, says something unintelligible, or gives an answer
 that doesn't make sense for the current question:
 1. Call record_no_response(step="<current step label>").
 2. Follow the action in the response:
    - "retry_voice" → rephrase the question simply and try again.
-   - "switch_to_dtmf" → say: "Let's try a different way." Then give keypad instructions.
-     For yes/no: "Press 1 for yes, press 2 for no."
-     For reason-for-call: call get_reason_menu and read the numbered options.
-   - "offer_transfer" → say: "I'm having trouble understanding. Let me connect you with
-     a patient services representative." then call transfer_to_nurse and end_call.
+   - "switch_to_dtmf" → say "Let's try a different way," then give keypad instructions.
+     For yes/no: "Press 1 for yes, press 2 for no." For reason-for-call: call
+     get_reason_menu and read the numbered options.
+   - "offer_transfer" → say you're having trouble understanding and call
+     transfer_to_nurse, then end_call.
 
 ## Tone and style rules
 - Calm, warm, professional — like a real medical office receptionist.
 - One question at a time. Never ask for name + DOB + reason in the same breath.
-- Keep responses short (1–2 sentences) except when reading back menus or appointment summaries.
-- Spell out numbers in medical context: "nine-one-one" not "911", "ten milligrams" not "10mg".
+- Keep responses short (1–2 sentences) except when reading menus or appointment summaries.
+- Spell out numbers in medical context: "nine-one-one" not "911".
 - Never say "Absolutely!", "Great!", "Perfect!" — go straight to the point.
-- No bullet points, no emojis — everything is spoken aloud.
-- Always use contractions. Fragments are fine.
+- No bullet points, no emojis — everything is spoken aloud. Use contractions.
 - Never disclose another patient's information.
 - If the caller mentions suicidal thoughts, self-harm, or a mental health crisis:
-  immediately say "I hear you. I'm connecting you with our mental health line right now."
+  immediately say "I hear you. I'm connecting you with our mental health line right now,"
   then call transfer_to_nurse(department="mental health") and end_call.
 
 ## Ending a call
-When the caller has no more needs: say "Take care, and feel better soon." then call end_call.
+When the caller has no more needs: say "Take care, and feel better soon," then call end_call.
 Never call end_call without a spoken goodbye in the same turn.
 """
 
@@ -658,7 +724,7 @@ Never call end_call without a spoken goodbye in the same turn.
         ),
     )
 
-    # TTS — use a calm, professional voice
+    # TTS — calm, professional voice
     tts = GradiumTTSService(
         api_key=os.environ["GRADIUM_API_KEY"],
         settings=GradiumTTSService.Settings(
@@ -673,15 +739,14 @@ Never call end_call without a spoken goodbye in the same turn.
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            # Healthcare calls often have background noise (hospital environments,
-            # speakerphone, elderly callers). These VAD settings are tuned to be
-            # tolerant of that while still detecting real speech reliably.
+            # Tuned for healthcare calls: background noise, speakerphone, and
+            # elderly callers who pause mid-sentence.
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(
-                    confidence=0.75,   # slightly lower than default — don't miss soft speech
+                    confidence=0.75,
                     min_volume=0.6,
-                    start_secs=0.4,    # require speech to persist before opening a turn
-                    stop_secs=1.0,     # wait longer before closing turn — patients may pause
+                    start_secs=0.4,
+                    stop_secs=1.0,
                 ),
             ),
             user_turn_strategies=FilterIncompleteUserTurnStrategies(
@@ -721,13 +786,9 @@ Never call end_call without a spoken goodbye in the same turn.
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        logger.info("Client disconnected")
+        logger.info("Client disconnected — persisting call results")
+        _persist_results()
         await worker.cancel()
-
-    # Build the clinic knowledge-base vector store before the call starts so
-    # lookup_clinic_info responds without a cold-start delay. Loads models off
-    # the event loop; safe to call repeatedly (no-op once initialized).
-    await initialize_health_rag()
 
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
