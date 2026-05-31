@@ -1,238 +1,122 @@
-# YC Voice Agents Hackathon
-
-Welcome to the YC Voice Agents Hackathon, hosted by [Cekura](https://cekura.com) and [Daily](https://daily.co), in partnership with [NVIDIA](https://nvidia.com), [AWS](https://aws.amazon.com), and [Twilio](https://twilio.com).
-
-The goal of this event is to learn about building, scaling, evaluating, and continuously improving voice agents.
-
-## Schedule, rules, and prizes
-
-This is a one-day event. Please arrive by 8:30. We'll kick things off at 9:00.
-
-### Schedule
-
-  - 8:00 AM – Doors open & registration
-  - 8:30 AM – Breakfast
-  - 9:00 AM – Welcome / Hackathon begins
-  - 12:00 PM – Lunch
-  - 6:00 PM – Submissions due
-  - 6:00 - 8:00 PM – Dinner, demos, and conversation
-  - 8:00 PM – Judges' presentations
-  - 9:00 PM – We all go home
-
-### General guidance
-
-First of all, please respect the YC space. We very much appreciate YC hosting these events. Stay in the designated areas, clean up after meals, and in general be a good guest.
-
-Build something new for this hackathon. Use the tools from Cekura to evaluate and improve the performance of what you build. Use Pipecat as the orchestration framework for your voice agent. We also encourage you to use the open source models from NVIDIA, but it's okay to use any models that work well for your project.
-
-There will be engineers from Cekura, Daily, NVIDIA, AWS, and Twilio available to help you with your project. Don't hesitate to find us.
-
-Judging will start at 6:00. In general, the judges want to showcase interesting projects rather than just pick winners. So don't worry too much about what the judges are looking for in a project. Build something that demonstrates creativity, is interesting on a technical level, or solves a real problem! But do keep in mind that the judges want to see great examples of using Cekura to improve voice agent performance, and using open source models from NVIDIA.
-
-
-# Tech stack and starting points.
-
-This repo contains two versions of a voice agent built with [Pipecat](https://pipecat.ai).
-
-The demo bot **Flour & Frost** is a neighborhood cake shop: callers order a cake for delivery while the bot looks up the catalog, captures delivery details, and places the order. All backend calls are mocked, so the starter runs with nothing but AI service keys.
-
-## Version 1 — GPT-4.1
-
-You can start with this before the hackathon, if you want to. Or test GPT-4.1 and Nemotron side-by-side during the hackathon, using Cekura.
-
-This bot only requires a Gradium API key and an OpenAI API key. Sign up for free at [Gradium](https://gradium.ai). We'll provide a code for Gradium credits, during the event.
-
-- **STT:** [Gradium](https://gradium.ai)
-- **LLM:** [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses) (GPT-4.1)
-- **TTS:** [Gradium](https://gradium.ai)
-- **Transports:** SmallWebRTC (local dev) and [Twilio](https://www.twilio.com/en-us) (production telephony)
-- **Deploy target:** [Pipecat Cloud](https://pipecat.daily.co)
-
-## Version 2
-
-NVIDIA models hosted on AWS, available during the hackathon.
-
-```
-  export NVIDIA_ASR_URL=ws://44.241.251.184:8080
-  export NEMOTRON_LLM_URL=http://nemotron-fleet-alb-1322439314.us-west-2.elb.amazonaws.com/v1
-  export NEMOTRON_LLM_MODEL=nvidia/nemotron-3-super
-  ```
-
-- **STT:** [Nemotron Speech Streaming](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b)
-- **LLM:** [Nemotron 3 Super 120B](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16)
-- **TTS:** [Gradium](https://gradium.ai)
-- **Transports:** SmallWebRTC (local dev) and Twilio (production telephony)
-- **Deploy target:** [Pipecat Cloud](https://pipecat.daily.co)
-
-## Develop locally
-
-Get the bot running over WebRTC in your browser before you push to the cloud or wire up the phone, for a faster iteration loop.
-
-### Prerequisites
-
-- Python 3.11+
-- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) package manager
-- API keys for [OpenAI](https://platform.openai.com) and [Gradium](https://gradium.ai)
-
-### Setup
-
-1. **Clone and enter the server directory:**
-
-   ```bash
-   git clone https://github.com/pipecat-ai/yc-voice-agents-hackathon.git
-   cd yc-voice-agents-hackathon/server
-   ```
-
-2. **Configure API keys:**
-
-   ```bash
-   cp .env.example .env
-   # Edit .env and fill in OPENAI_API_KEY, GRADIUM_API_KEY.
-   # TWILIO_* keys are only needed when you wire up the phone (next section).
-   ```
-
-3. **Install dependencies:**
-
-   ```bash
-   uv sync
-   ```
-
-4. **Run the bot:**
-
-   ```bash
-   # run one or the other of these
-   uv run bot-gpt.py
-   uv run bot-nemotron.py
-   ```
-
-   Open [http://localhost:7860](http://localhost:7860) and click **Connect** to start talking. First launch takes ~20s while Pipecat downloads VAD and turn-detection models.
-
-## Deploy to Pipecat Cloud
-
-Once the bot works locally, deploy to Pipecat Cloud and connect it to a Twilio phone number so anyone can call in.
-
-### Prerequisites
-
-1. [Sign up for Pipecat Cloud](https://pipecat.daily.co/sign-up)
-2. Install the [Pipecat CLI](https://github.com/pipecat-ai/pipecat-cli) and log in:
-
-   ```bash
-   uv tool install pipecat-ai-cli
-   pc cloud auth login
-   ```
-
-### Configure Twilio
-
-1. [Add credits / upgrade your Twilio account](https://twil.io/yc-hack)
-
-2. [Buy a phone number](https://help.twilio.com/articles/223135247) with voice capability.
-
-3. Get your Pipecat Cloud organization name:
-
-   ```bash
-   pc cloud organizations list
-   ```
-
-4. [Create a TwiML Bin](https://www.twilio.com/docs/serverless/twiml-bins/getting-started#create-a-new-twiml-bin) with this configuration:
-
-   ```xml
-   <?xml version="1.0" encoding="UTF-8"?>
-   <Response>
-     <Connect>
-       <Stream url="wss://api.pipecat.daily.co/ws/twilio">
-         <Parameter name="_pipecatCloudServiceHost"
-           value="flower-bot.YOUR_ORG_NAME"/>
-       </Stream>
-     </Connect>
-   </Response>
-   ```
-
-   Replace `YOUR_ORG_NAME` with the org name from step 2.
-
-5. [Attach the TwiML Bin](https://www.twilio.com/docs/serverless/twiml-bins/getting-started#wire-your-twiml-bin-up-to-an-incoming-phone-call) to your Twilio number: Go to [your phone numbers](https://console.twilio.com/go?to=/account/__account__/us1/senders-hub/list/phone-numbers/inventory) → select your
-number → under **Voice Configuration**, set method to the **TwiML Bin** you created → Save.
-
-6. [Optional] Use [Twilio Dev phone](https://www.twilio.com/docs/labs/dev-phone) for testing.
-
-### Review the deployment configuration
-
-Your deployment details are specified in the `pcc-deploy.toml` file. You can learn more about options in the [docs](https://docs.pipecat.ai/api-reference/cli/cloud/deploy#configuration-file-pcc-deploy-toml).
-
-### Upload secrets
-
-```bash
-pc cloud secrets set flower-bot-secrets --file .env
-```
-
-This uploads everything from `.env` to Pipecat Cloud's secure storage. The bot reads from there at runtime, so you don't bake keys into the image.
-
-### Deploy
-
-Build and run your bot on Pipecat Cloud:
-
-```bash
-pc cloud deploy
-```
-
-Learn more about [cloud builds](https://docs.pipecat.ai/pipecat-cloud/guides/cloud-builds).
-
-### Call your bot
-
-Dial the Twilio number you set up. 🌷
-
-## Test your agent with Cekura
-
-[Cekura](https://cekura.com) tests and observes voice agents. For this hackathon, use it to **test the Pipecat bot you build in this repo** — run real conversations against it, score the transcripts, and fix what's failing before you demo.
-
-### Sign up
-
-Create your account at **[dashboard.cekura.ai](https://dashboard.cekura.ai)**. If you're approved for this hackathon, just sign up and your credits will show up automatically. If you don't see them, find someone from the Cekura team, they're on-site.
-
-### Onboarding (or skip it)
-
-On first login you'll land on a short setup flow that helps you create your first agent and test. Feel free to click through it — **or hit _Skip_** and jump straight to the dashboard if you'd rather set things up yourself. Either way takes a minute.
-
-### Recommended: start by testing your agent (via Claude Code)
-
-The fastest path — and what we recommend for the hackathon — is to drive Cekura from **Claude Code** using our MCP server + skills. You stay in your terminal, and Cekura handles agent creation, scenario generation, and running the test.
-
-**1. Install the Cekura skills + MCP** (Claude Code marketplace plugin — bundles the skills, slash commands, and auto-configured MCP server):
-
-```bash
-/plugin marketplace add cekura-ai/cekura-skills
-/plugin install cekura@cekura-skills
-```
-
-Repo: [github.com/cekura-ai/cekura-skills](https://github.com/cekura-ai/cekura-skills) · Full setup + other agents (Cursor, Codex, etc.): **[docs.cekura.ai → Claude Code guide](https://docs.cekura.ai/mcp/claude-code-guide)** and **[Skills](https://docs.cekura.ai/mcp/skills)**.
-
-**2. Run an end-to-end test** of your agent with a single command:
-
-```
-/cekura-report
-```
-
-This spins up anything from 10–20 evaluators (what Cekura calls test cases), runs scenarios against your Pipecat agent, and gives you back a full report — transcripts, scores, and what failed — so you can iterate fast.
-
-> When connecting your agent, **select `Pipecat` as the provider.** Details: [docs.cekura.ai → Pipecat](https://docs.cekura.ai/documentation/integrations/pipecat/automated).
-
-## Learn more
-
-### Pipecat
-
-- [Pipecat Documentation](https://docs.pipecat.ai/)
-- [Pipecat Cloud Deployment](https://docs.pipecat.ai/pipecat-cloud/introduction)
-- [Pipecat Examples](https://github.com/pipecat-ai/pipecat-examples)
-- [Pipecat Discord](https://discord.gg/pipecat)
-
-### Twilio
-
-- [Twilio Developer Hub](https://www.twilio.com/en-us/developers)
-- [Twilio Documentation](https://www.twilio.com/docs)
-- [Twilio Dev phone](https://www.twilio.com/docs/labs/dev-phone)
-
-### Cekura
-
-- [Claude Code guide](https://docs.cekura.ai/mcp/claude-code-guide) — MCP + skills setup
-- [Cekura skills](https://docs.cekura.ai/mcp/skills) — all slash commands
-- [Pipecat integration](https://docs.cekura.ai/documentation/integrations/pipecat/automated)
-- [Cekura docs](https://docs.cekura.ai) · [dashboard](https://dashboard.cekura.ai)
+Cake order — Voice Ordering Bot
+YC Voice Agents Hackathon submission
+
+
+
+https://github.com/arunnair411/yc-voice-agents-hackathon/tree/main
+
+
+1. What is this?
+It is a voice agent for a neighborhood cake shop. A customer calls in and the bot handles the full ordering experience — no hold music, no phone trees, no staff needed for routine orders.
+The caller can:
+Ask what's available today, filtered by occasion ("something for my mom's birthday") or deals ("anything on special?")
+Get bouquet descriptions and prices read back naturally
+Add items to an order, hear a summary, and confirm
+Give delivery details — recipient, address, date — one at a time
+Place the order and receive a confirmation number, all by voice
+What makes it real: the bot recognizes returning customers by phone number, greets them by name, and offers to reorder their last bouquet as a shortcut. All customer data — order history, preferences, past purchases — lives in a JSON record that is loaded once at the start of every call and written back at the end with the new order appended. No database, no latency, no cold starts. The next call picks up exactly where the last one left off.
+The bot runs on the full NVIDIA stack (Nemotron Speech Streaming STT + Nemotron-3-Super-120B LLM) with Gradium TTS, orchestrated with Pipecat, and deployed via Pipecat Cloud to a real Twilio phone number.
+
+2. Demo video
+https://drive.google.com/file/d/1BgyUizkRiqfWBGjASC6d_A07pzCeuqgn/view?usp=sharing 
+Suggested: returning customer calls → bot recognizes their number → "Welcome back! Last time you ordered the Rose Romance — want that again or something different?" → they pick something new → delivery details → confirmation number → goodbye. Under 60 seconds.
+
+3. How we used Cekura, Nemotron, and Pipecat
+Pipecat
+Pipecat is the full orchestration layer:
+Twilio / WebRTC → Nemotron STT → LLM context aggregator → Nemotron LLM → Gradium TTS → caller
+What we used and tuned:
+SileroVADAnalyzer with tuned params (confidence=0.8, min_volume=0.7, start_secs=0.3) — background noise on speakerphone calls was triggering false turns; Cekura tests helped us find the right thresholds
+FilterIncompleteUserTurnStrategies + MinWordsUserTurnStartStrategy(min_words=3) — while the bot is speaking, requires 3 words before treating input as a real interruption; eliminates most accidental barge-ins from ambient noise
+FunctionCallParams + register_direct_function for all 7 tools: list_bouquets, check_availability, add_to_order, get_order_summary, set_delivery_details, place_order, end_call
+on_client_connected to greet and kick off the conversation; on_client_disconnected to trigger the JSON write-back
+Nemotron
+STT: NVIDIA Nemotron Speech Streaming over WebSocket at 16 kHz
+LLM: Nemotron-3-Super-120B-A12B on the hackathon AWS endpoint
+We ran the same bot on GPT-4.1 (baseline) and Nemotron-3-Super with identical system prompts and tools, and used Cekura to measure task completion rates across both.
+Cekura
+What we were testing:
+Does the bot apply the right occasion filter (list_bouquets(occasion="birthday")) when the caller mentions an occasion, rather than reading 15 bouquets?
+Does it collect delivery details one field at a time — name, then address, then date — never in one breath?
+Does it only call place_order after the customer has explicitly confirmed — never before?
+Does VAD tuning reduce false interruptions from background noise?
+How does Nemotron-3-Super compare to GPT-4.1 on task completion?
+Results:
+Scenario
+Before tuning
+After tuning
+Correct occasion filter applied
+[FILL IN]%
+[FILL IN]%
+Delivery collected one field at a time
+[FILL IN]%
+[FILL IN]%
+Order placed only after confirmation
+[FILL IN]%
+[FILL IN]%
+False VAD interruption rate
+[FILL IN]%
+[FILL IN]%
+Overall task completion (order placed)
+[FILL IN]%
+[FILL IN]%
+
+Biggest improvements: [FILL IN]. Cekura caught [FILL IN] without needing to manually run dozens of test calls.
+
+4. What we built during the hackathon
+Starting point (hackathon starter):
+bot-gpt.py — cake shop bot on GPT-4.1 + Gradium
+bot-nemotron.py — same bot on NVIDIA stack
+mock_backend.py — Python dict of 15 bouquets + 2 known customers
+Built during the hackathon:
+What
+Where
+JSON data store: single shop_data.json file replacing the Python dict
+server/shop_data.json
+Load-once-per-call pattern: data loaded once at call start, all tools read from memory
+run_bot() in bot
+Returning customer recognition by phone number with last-order shortcut
+lookup_customer_by_phone tool
+Order write-back: placed orders appended to customer history in JSON at call end
+_persist_order()
+VAD robustness tuning — iterated using Cekura eval results
+VADParams in bot
+Cekura evaluation scenarios
+[FILL IN]
+
+Key design decision — JSON over a database:
+We replaced the hardcoded Python dict with a JSON file that persists across calls. Every call loads it once (a single file read, ~1ms), reads from memory for the entire call, and writes the new order back on disconnect. A returning customer's second call already knows what they ordered last time. No ORM, no connection pool, no cold start. For a demo-scale shop this is the right tradeoff — if it were a real shop with thousands of customers you'd swap in a database behind the same load/persist interface.
+
+5. Tool feedback
+Pipecat — what worked well
+STT and LLM are genuinely plug-and-play — swapping Nemotron for GPT-4.1 is one import line, everything else is identical
+FunctionCallParams + register_direct_function makes tools easy to write and test independently of the pipeline
+LLMContextAggregatorPair handles the stateful turn management cleanly — we didn't have to think about it
+Pipecat — could be better
+SileroVADAnalyzer params (confidence, min_volume, start_secs, stop_secs) have no perceptual documentation — had to tune by ear and Cekura tests. A reference table for "quiet desktop vs. speakerphone vs. noisy environment" would save hours
+When a module import fails silently at startup, the call connects but the bot says nothing — very hard to debug. A startup health check that fails loudly before accepting the first call would help
+FilterIncompleteUserTurnStrategies(start=[MinWordsUserTurnStartStrategy(min_words=3)]) is a lot of nesting for a common pattern; a shorthand on LLMUserAggregatorParams would be cleaner
+Nemotron — what worked well
+Function calling accuracy was strong — "something for a funeral, not too expensive" reliably maps to list_bouquets(occasion="sympathy") without extra prompt engineering
+TTFT on short outputs felt competitive with GPT-4.1
+Nemotron — could be better
+[FILL IN — your specific observations on tool call reliability, latency consistency, STT quality on soft speech or pauses]
+Endpoint availability during the hackathon: [FILL IN]
+Cekura — what worked well
+[FILL IN — scenario quality, transcript scoring, Pipecat integration]
+Cekura — bugs / suggestions
+[FILL IN]
+
+
+Run it yourself
+git clone https://github.com/arunnair411/yc-voice-agents-hackathon
+cd yc-voice-agents-hackathon && git checkout main
+cd server && cp .env.example .env
+# Fill in GRADIUM_API_KEY and NVIDIA_* keys (or OPENAI_API_KEY for GPT-4.1)
+uv sync
+uv run bot-nemotron.py    # Nemotron stack
+# or: uv run bot-gpt.py  # GPT-4.1 baseline
+# Open http://localhost:7860 → Connect
+Add your phone number to shop_data.json under customers to test the returning-customer recognition flow.
+
+Built at the YC Voice Agents Hackathon, May 2026.
