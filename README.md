@@ -40,9 +40,8 @@ Does the bot apply the right occasion filter (list_bouquets(occasion="birthday")
 Does it collect delivery details one field at a time — name, then address, then date — never in one breath?
 Does it only call place_order after the customer has explicitly confirmed — never before?
 Does VAD tuning reduce false interruptions from background noise?
-How does Nemotron-3-Super compare to GPT-4.1 on task completion?
+
 Results:
-Scenario
 Before tuning
 0%
 After tuning
