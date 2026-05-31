@@ -28,7 +28,7 @@ Robustness:
   - After 2 failed attempts at voice, the bot switches to DTMF instructions.
   - After 3 total failures on any step, the bot offers to transfer to a nurse.
 
-Pipeline: Gradium STT → OpenAI GPT-4.1 LLM → Gradium TTS
+Pipeline: Nemotron Speech Streaming STT → Nemotron-3-Super-120B LLM → Gradium TTS
 
 Run::
 
@@ -44,7 +44,6 @@ from dotenv import load_dotenv
 from loguru import logger
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import EndTaskFrame, FunctionCallResultProperties, LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -55,24 +54,20 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.runner.types import (
+    DailyRunnerArguments,
     RunnerArguments,
     SmallWebRTCRunnerArguments,
     WebSocketRunnerArguments,
 )
 from pipecat.runner.utils import parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
-from pipecat.services.gradium.stt import GradiumSTTService
 from pipecat.services.gradium.tts import GradiumTTSService
 from pipecat.services.llm_service import FunctionCallParams
-from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
-from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.transports.daily.transport import DailyParams, DailyTransport
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
-from pipecat.turns.user_start.min_words_user_turn_start_strategy import (
-    MinWordsUserTurnStartStrategy,
-)
 from pipecat.turns.user_turn_strategies import FilterIncompleteUserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
@@ -83,6 +78,8 @@ from healthcare_store import (
     persist_call_results,
     search_knowledge,
 )
+from nemotron_llm import VLLMOpenAILLMService
+from nvidia_stt import NVidiaWebSocketSTTService
 
 load_dotenv(override=True)
 
@@ -709,18 +706,25 @@ When the caller has no more needs: say "Take care, and feel better soon," then c
 Never call end_call without a spoken goodbye in the same turn.
 """
 
-    # STT
-    stt = GradiumSTTService(
-        api_key=os.environ["GRADIUM_API_KEY"],
-        settings=GradiumSTTService.Settings(language=Language.EN),
+    # Speech-to-Text — Nemotron Speech Streaming STT over WebSocket (16-bit PCM,
+    # 16 kHz mono, matching the WebRTC input path). Override via NVIDIA_ASR_URL.
+    stt = NVidiaWebSocketSTTService(
+        url=os.getenv("NVIDIA_ASR_URL", "ws://192.168.7.228:8081"),
+        strip_interim_prefix=True,
     )
 
-    # LLM
-    llm = OpenAIResponsesLLMService(
-        api_key=os.environ["OPENAI_API_KEY"],
-        settings=OpenAIResponsesLLMService.Settings(
-            model=os.getenv("OPENAI_MODEL", "gpt-4.1"),
+    # LLM — Nemotron-3-Super-120B served by vLLM (OpenAI-compatible chat
+    # completions at /v1). Reasoning ("thinking") is OFF by default for
+    # low-latency voice; enable with NEMOTRON_ENABLE_THINKING=true only if the
+    # vLLM server runs a reasoning parser (else chain-of-thought is spoken).
+    enable_thinking = os.getenv("NEMOTRON_ENABLE_THINKING", "false").lower() == "true"
+    llm = VLLMOpenAILLMService(
+        api_key=os.getenv("NEMOTRON_LLM_API_KEY", "EMPTY"),  # vLLM ignores unless --api-key set
+        base_url=os.getenv("NEMOTRON_LLM_URL", "http://192.168.7.228:8000/v1"),
+        settings=VLLMOpenAILLMService.Settings(
+            model=os.getenv("NEMOTRON_LLM_MODEL", "nvidia/nemotron-3-super"),
             system_instruction=system_instruction,
+            extra={"extra_body": {"chat_template_kwargs": {"enable_thinking": enable_thinking}}},
         ),
     )
 
@@ -739,19 +743,12 @@ Never call end_call without a spoken goodbye in the same turn.
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            # Tuned for healthcare calls: background noise, speakerphone, and
-            # elderly callers who pause mid-sentence.
-            vad_analyzer=SileroVADAnalyzer(
-                params=VADParams(
-                    confidence=0.75,
-                    min_volume=0.6,
-                    start_secs=0.4,
-                    stop_secs=1.0,
-                ),
-            ),
-            user_turn_strategies=FilterIncompleteUserTurnStrategies(
-                start=[MinWordsUserTurnStartStrategy(min_words=2)],
-            ),
+            # Default VAD + turn-taking, matching the Nemotron bot. Krisp
+            # denoising runs on Pipecat Cloud, so no babble-robustness tuning is
+            # needed here — and a min_words gate could strand a short backchannel
+            # that lands on a tool result, leaving the bot silent.
+            vad_analyzer=SileroVADAnalyzer(),
+            user_turn_strategies=FilterIncompleteUserTurnStrategies(),
         ),
     )
 
@@ -806,6 +803,21 @@ async def bot(runner_args: RunnerArguments):
         krisp_filter = None
 
     match runner_args:
+        case DailyRunnerArguments():
+            # Pipecat Cloud starts a session into a Daily room (the path Cekura's
+            # automated testing uses). Join that room as the bot. Uses run_bot's
+            # default 16 kHz in / 24 kHz out, same as the WebRTC path.
+            transport = DailyTransport(
+                runner_args.room_url,
+                runner_args.token,
+                "HealthLine",
+                params=DailyParams(
+                    audio_in_enabled=True,
+                    audio_in_filter=krisp_filter,
+                    audio_out_enabled=True,
+                ),
+            )
+
         case SmallWebRTCRunnerArguments():
             webrtc_connection: SmallWebRTCConnection = runner_args.webrtc_connection
             transport = SmallWebRTCTransport(
