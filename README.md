@@ -18,7 +18,7 @@ What makes it real: the bot recognizes returning customers by phone number, gree
 The bot runs on the full NVIDIA stack (Nemotron Speech Streaming STT + Nemotron-3-Super-120B LLM) with Gradium TTS, orchestrated with Pipecat, and deployed via Pipecat Cloud to a real Twilio phone number.
 
 2. Demo video
-[[https://drive.google.com/file/d/1BgyUizkRiqfWBGjASC6d_A07pzCeuqgn/view?usp=sharing ](https://photos.google.com/share/AF1QipPWIl5X1N5If7p-nliUFVKTqMg0_6pf1ZOo35mXFjS8yJU5FT6H0WHoeCgsDu-Tvg?key=QUFxVEwtb0NPeFBXTTFCUGhBVTFuWUNsOEI4VS1R&pli=1)](https://drive.google.com/file/d/1YIivYtRBDaD1ZINDYJUz31EQzmn9CV4K/view?usp=sharing)
+https://drive.google.com/file/d/1YIivYtRBDaD1ZINDYJUz31EQzmn9CV4K/view?usp=sharing 
 
 
 3. How we used Cekura, Nemotron, and Pipecat
