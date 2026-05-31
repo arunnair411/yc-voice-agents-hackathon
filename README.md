@@ -44,24 +44,14 @@ How does Nemotron-3-Super compare to GPT-4.1 on task completion?
 Results:
 Scenario
 Before tuning
+0%
 After tuning
-Correct occasion filter applied
-[FILL IN]%
-[FILL IN]%
-Delivery collected one field at a time
-[FILL IN]%
-[FILL IN]%
-Order placed only after confirmation
-[FILL IN]%
-[FILL IN]%
-False VAD interruption rate
-[FILL IN]%
-[FILL IN]%
-Overall task completion (order placed)
-[FILL IN]%
-[FILL IN]%
+40%
 
-Biggest improvements: [FILL IN]. Cekura caught [FILL IN] without needing to manually run dozens of test calls.
+Other evals
+
+
+Biggest improvements was in unavailable scenario. Cekura caught it without needing to manually run dozens of test calls.
 
 4. What we built during the hackathon
 Starting point (hackathon starter):
@@ -82,7 +72,6 @@ _persist_order()
 VAD robustness tuning — iterated using Cekura eval results
 VADParams in bot
 Cekura evaluation scenarios
-[FILL IN]
 
 Key design decision — JSON over a database:
 We replaced the hardcoded Python dict with a JSON file that persists across calls. Every call loads it once (a single file read, ~1ms), reads from memory for the entire call, and writes the new order back on disconnect. A returning customer's second call already knows what they ordered last time. No ORM, no connection pool, no cold start. For a demo-scale shop this is the right tradeoff — if it were a real shop with thousands of customers you'd swap in a database behind the same load/persist interface.
@@ -99,13 +88,6 @@ FilterIncompleteUserTurnStrategies(start=[MinWordsUserTurnStartStrategy(min_word
 Nemotron — what worked well
 Function calling accuracy was strong — "something for a funeral, not too expensive" reliably maps to list_bouquets(occasion="sympathy") without extra prompt engineering
 TTFT on short outputs felt competitive with GPT-4.1
-Nemotron — could be better
-[FILL IN — your specific observations on tool call reliability, latency consistency, STT quality on soft speech or pauses]
-Endpoint availability during the hackathon: [FILL IN]
-Cekura — what worked well
-[FILL IN — scenario quality, transcript scoring, Pipecat integration]
-Cekura — bugs / suggestions
-[FILL IN]
 
 
 Run it yourself
