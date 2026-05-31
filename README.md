@@ -59,23 +59,28 @@ Other evals
 Biggest improvements was in unavailable scenario. Cekura caught it without needing to manually run dozens of test calls.
 
 4. What we built during the hackathon
+
 Starting point (hackathon starter):
-bot-gpt.py — cake shop bot on GPT-4.1 + Gradium
-bot-nemotron.py — same bot on NVIDIA stack
-mock_backend.py — Python dict of 15 bouquets + 2 known customers
+bot-gpt.py 
+bot-nemotron.py 
+mock_backend.py 
+
 Built during the hackathon:
-What
-Where
-JSON data store: single shop_data.json file replacing the Python dict
-server/shop_data.json
+
+py data store
 Load-once-per-call pattern: data loaded once at call start, all tools read from memory
 run_bot() in bot
+
 Returning customer recognition by phone number with last-order shortcut
 lookup_customer_by_phone tool
+
 Order write-back: placed orders appended to customer history in JSON at call end
 _persist_order()
+
 VAD robustness tuning — iterated using Cekura eval results
+
 VADParams in bot
+
 Cekura evaluation scenarios
 
 Key design decision — JSON over a database:
