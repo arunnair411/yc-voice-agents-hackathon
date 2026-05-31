@@ -34,7 +34,7 @@ Judging will start at 6:00. In general, the judges want to showcase interesting 
 
 This repo contains two versions of a voice agent built with [Pipecat](https://pipecat.ai).
 
-The demo bot **Field & Flower** is a neighborhood flower shop: callers order a bouquet for delivery while the bot looks up the catalog, captures delivery details, and places the order. All backend calls are mocked, so the starter runs with nothing but AI service keys.
+The demo bot **Flour & Frost** is a neighborhood cake shop: callers order a cake for delivery while the bot looks up the catalog, captures delivery details, and places the order. All backend calls are mocked, so the starter runs with nothing but AI service keys.
 
 ## Version 1 — GPT-4.1
 

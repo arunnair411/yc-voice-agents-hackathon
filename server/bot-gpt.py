@@ -4,9 +4,9 @@
 # SPDX-License-Identifier: BSD 2-Clause License
 #
 
-"""Field & Flower — flower shop voice ordering bot (hackathon starter).
+"""Flour & Frost — cake shop voice ordering bot (hackathon starter).
 
-A customer calls in and the bot helps them pick a bouquet and arrange delivery.
+A customer calls in and the bot helps them pick a cake and arrange delivery.
 All backend calls (catalog, customer lookup, order placement) are mocked so the
 starter runs with no external dependencies beyond the AI services.
 
@@ -59,7 +59,7 @@ from pipecat.turns.user_start.min_words_user_turn_start_strategy import (
 from pipecat.turns.user_turn_strategies import FilterIncompleteUserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
-from mock_backend import BOUQUETS, KNOWN_CUSTOMERS
+from mock_backend import CAKES, KNOWN_CUSTOMERS
 
 load_dotenv(override=True)
 
@@ -129,30 +129,30 @@ async def run_bot(
 
     # --- Tools the LLM can call ---------------------------------------------
 
-    async def list_bouquets(
+    async def list_cakes(
         params: FunctionCallParams,
         occasion: str | None = None,
         specials_only: bool = False,
     ) -> None:
-        """List bouquets available today. Optionally filter by occasion or by
+        """List cakes available today. Optionally filter by occasion or by
         what's currently on special.
 
         Use this when the caller asks what's available, mentions a specific
         occasion ("it's for my mom's birthday", "for Valentine's Day", "for a
-        funeral"), or asks about specials/deals. Sold-out bouquets are
+        wedding"), or asks about specials/deals. Sold-out cakes are
         automatically excluded from results.
 
         Args:
             occasion: Lowercase occasion to filter by. Common values:
                 "birthday", "anniversary", "valentine's day", "mother's day",
-                "sympathy", "wedding", "graduation", "thank you", "get well",
-                "new baby", "housewarming", "christmas", "easter", "just
-                because". Pass the canonical short form ("birthday", not "mom's
-                birthday"). Omit to return the full catalog.
-            specials_only: If True, only return bouquets currently on special.
+                "wedding", "graduation", "thank you", "baby shower", "new baby",
+                "thanksgiving", "christmas", "celebration", "just because". Pass
+                the canonical short form ("birthday", not "mom's birthday").
+                Omit to return the full catalog.
+            specials_only: If True, only return cakes currently on special.
         """
         results = []
-        for name, info in BOUQUETS.items():
+        for name, info in CAKES.items():
             if not info["in_stock"]:
                 continue
             if specials_only and not info.get("on_special", False):
@@ -167,9 +167,9 @@ async def run_bot(
         if not results and (occasion is not None or specials_only):
             await params.result_callback(
                 {
-                    "bouquets": [],
+                    "cakes": [],
                     "note": (
-                        "No bouquets match those filters. Tell the caller you don't have "
+                        "No cakes match those filters. Tell the caller you don't have "
                         "anything specifically for that, and offer to browse the full "
                         "catalog or try a different angle."
                     ),
@@ -177,50 +177,50 @@ async def run_bot(
             )
             return
 
-        await params.result_callback({"bouquets": results})
+        await params.result_callback({"cakes": results})
 
-    async def check_availability(params: FunctionCallParams, bouquet_name: str) -> None:
-        """Check whether a specific bouquet is in stock today.
+    async def check_availability(params: FunctionCallParams, cake_name: str) -> None:
+        """Check whether a specific cake is in stock today.
 
         Args:
-            bouquet_name: The name of the bouquet to check, lowercase.
+            cake_name: The name of the cake to check, lowercase.
         """
-        item = BOUQUETS.get(bouquet_name.lower())
+        item = CAKES.get(cake_name.lower())
         if not item:
             await params.result_callback(
-                {"available": False, "reason": f"We don't carry a bouquet called '{bouquet_name}'."}
+                {"available": False, "reason": f"We don't carry a cake called '{cake_name}'."}
             )
             return
         if not item["in_stock"]:
             await params.result_callback(
-                {"available": False, "reason": f"{bouquet_name} is sold out today."}
+                {"available": False, "reason": f"{cake_name} is sold out today."}
             )
             return
         await params.result_callback({"available": True, "price": item["price"]})
 
     async def add_to_order(
-        params: FunctionCallParams, bouquet_name: str, quantity: int = 1
+        params: FunctionCallParams, cake_name: str, quantity: int = 1
     ) -> None:
-        """Add a bouquet to the customer's order. Only call this after the
-        customer has confirmed they want this bouquet.
+        """Add a cake to the customer's order. Only call this after the
+        customer has confirmed they want this cake.
 
         Args:
-            bouquet_name: The name of the bouquet to add, lowercase.
-            quantity: How many of this bouquet to add. Defaults to 1.
+            cake_name: The name of the cake to add, lowercase.
+            quantity: How many of this cake to add. Defaults to 1.
         """
-        item = BOUQUETS.get(bouquet_name.lower())
+        item = CAKES.get(cake_name.lower())
         if not item:
             await params.result_callback(
-                {"ok": False, "reason": f"We don't carry a bouquet called '{bouquet_name}'."}
+                {"ok": False, "reason": f"We don't carry a cake called '{cake_name}'."}
             )
             return
         if not item["in_stock"]:
             await params.result_callback(
-                {"ok": False, "reason": f"{bouquet_name} is sold out today."}
+                {"ok": False, "reason": f"{cake_name} is sold out today."}
             )
             return
         order["items"].append(
-            {"bouquet": bouquet_name.lower(), "quantity": quantity, "price": item["price"]}
+            {"cake": cake_name.lower(), "quantity": quantity, "price": item["price"]}
         )
         await params.result_callback({"ok": True, "items": order["items"]})
 
@@ -240,7 +240,7 @@ async def run_bot(
         """Capture delivery details for the order.
 
         Args:
-            recipient_name: Name of the person receiving the flowers.
+            recipient_name: Name of the person receiving the cake.
             address: Delivery street address.
             delivery_date: Requested delivery date, in the customer's own words
                 (e.g. "Friday", "May 20th"). No parsing required.
@@ -262,7 +262,7 @@ async def run_bot(
             await params.result_callback({"ok": False, "reason": "Missing delivery details."})
             return
         total = sum(line["price"] * line["quantity"] for line in order["items"])
-        confirmation = f"FLW-{random.randint(100000, 999999)}"
+        confirmation = f"CAKE-{random.randint(100000, 999999)}"
         logger.info(f"Order placed: {confirmation} total=${total:.2f} order={order}")
         await params.result_callback(
             {
@@ -286,7 +286,7 @@ async def run_bot(
         )
 
     tool_functions = [
-        list_bouquets,
+        list_cakes,
         check_availability,
         add_to_order,
         get_order_summary,
@@ -302,10 +302,10 @@ async def run_bot(
     if customer:
         caller_context = (
             f"This caller is a returning customer (caller ID matched). On file: "
-            f"name {customer['name']}, last order the {customer['last_order']} bouquet. "
-            'Greet them generically: "Welcome back to Field & Flower! How can I help '
+            f"name {customer['name']}, last order the {customer['last_order']} cake. "
+            'Greet them generically: "Welcome back to Flour & Frost! How can I help '
             'today?" Do not use their name or mention their last order in the greeting; '
-            "that comes across as surveilling. Once they say they want flowers, you "
+            "that comes across as surveilling. Once they say they want a cake, you "
             "can offer their last order as a helpful shortcut, framed as record-keeping: "
             f'"I have you down for the {customer["last_order"]} last time, want that '
             'again or something different?" Always give them the alternative.'
@@ -316,9 +316,9 @@ async def run_bot(
         )
 
     system_instruction = (
-        "You are a friendly order-taker for Field & Flower, a neighborhood flower shop. "
-        "Help callers pick a bouquet and arrange delivery. Use the tools to look up "
-        "bouquets, check stock, add items, capture delivery details, and place the order. "
+        "You are a friendly order-taker for Flour & Frost, a neighborhood cake shop. "
+        "Help callers pick a cake and arrange delivery. Use the tools to look up "
+        "cakes, check stock, add items, capture delivery details, and place the order. "
         "Confirm the full order before calling place_order.\n\n"
         "Talk like a real shop clerk on the phone — not a chatbot:\n"
         "- Keep it to 1–2 short sentences per turn. Longer only when listing options or "
@@ -327,15 +327,16 @@ async def run_bot(
         "ask for the name, wait, then the next.\n"
         '- Skip filler openers like "Absolutely!", "That sounds lovely!", "Perfect!", '
         '"I\'d be happy to" — go straight to the point.\n'
-        "- Describe bouquets plainly. \"A dozen red roses with baby's breath, sixty-five "
-        'dollars." Not "a classic, romantic bouquet showing love and appreciation."\n'
-        "- When listing bouquets, ALWAYS lead with the bouquet's name. Format: "
-        '"<Name> — <description>, <price>." For example: "Spring Sunshine — yellow tulips '
-        'and daffodils, forty-five dollars." The name is how the caller refers back to it.\n'
+        "- Describe cakes plainly. \"Red velvet layers with cream cheese frosting, "
+        'forty-five dollars." Not "a classic, indulgent cake everyone will love."\n'
+        "- When listing cakes, ALWAYS lead with the cake's name. Format: "
+        '"<Name> — <description>, <price>." For example: "Classic Vanilla — vanilla '
+        'sponge with vanilla buttercream, thirty-five dollars." The name is how the '
+        "caller refers back to it.\n"
         "- When the caller mentions an occasion (birthday, Mother's Day, anniversary, "
-        "sympathy, etc.) or asks about specials/deals, pass those as filters to "
-        'list_bouquets (occasion="..." or specials_only=True) instead of reading the '
-        "full catalog. Don't list 15 bouquets when 3 are relevant.\n"
+        "wedding, etc.) or asks about specials/deals, pass those as filters to "
+        'list_cakes (occasion="..." or specials_only=True) instead of reading the '
+        "full catalog. Don't list 15 cakes when 3 are relevant.\n"
         "- The catalog has many options — when listing, name at most 4 or 5 at a time. "
         "If the caller doesn't bite, offer to share more.\n"
         "- Don't restate what the customer just said back to them, except in the final "
@@ -433,7 +434,7 @@ async def run_bot(
         context.add_message(
             {
                 "role": "user",
-                "content": "A customer just called. Greet them, 'This is Field & Flower, your local flower shop. How can I help you today?'",
+                "content": "A customer just called. Greet them, 'This is Flour & Frost, your local cake shop. How can I help you today?'",
             }
         )
         await worker.queue_frames([LLMRunFrame()])
