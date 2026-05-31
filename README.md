@@ -83,10 +83,12 @@ VADParams in bot
 
 Cekura evaluation scenarios
 
-Key design decision — JSON over a database:
+Key design decision — JSON style over a database:
+
 We replaced the hardcoded Python dict with a JSON file that persists across calls. Every call loads it once (a single file read, ~1ms), reads from memory for the entire call, and writes the new order back on disconnect. A returning customer's second call already knows what they ordered last time. No ORM, no connection pool, no cold start. For a demo-scale shop this is the right tradeoff — if it were a real shop with thousands of customers you'd swap in a database behind the same load/persist interface.
 
 5. Tool feedback
+
 Pipecat — what worked well
 STT and LLM are genuinely plug-and-play — swapping Nemotron for GPT-4.1 is one import line, everything else is identical
 FunctionCallParams + register_direct_function makes tools easy to write and test independently of the pipeline
@@ -96,7 +98,6 @@ SileroVADAnalyzer params (confidence, min_volume, start_secs, stop_secs) have no
 When a module import fails silently at startup, the call connects but the bot says nothing — very hard to debug. A startup health check that fails loudly before accepting the first call would help
 FilterIncompleteUserTurnStrategies(start=[MinWordsUserTurnStartStrategy(min_words=3)]) is a lot of nesting for a common pattern; a shorthand on LLMUserAggregatorParams would be cleaner
 Nemotron — what worked well
-Function calling accuracy was strong — "something for a funeral, not too expensive" reliably maps to list_bouquets(occasion="sympathy") without extra prompt engineering
 TTFT on short outputs felt competitive with GPT-4.1
 
 
