@@ -18,22 +18,28 @@ What makes it real: the bot recognizes returning customers by phone number, gree
 The bot runs on the full NVIDIA stack (Nemotron Speech Streaming STT + Nemotron-3-Super-120B LLM) with Gradium TTS, orchestrated with Pipecat, and deployed via Pipecat Cloud to a real Twilio phone number.
 
 2. Demo video
-[https://drive.google.com/file/d/1BgyUizkRiqfWBGjASC6d_A07pzCeuqgn/view?usp=sharing ](https://photos.google.com/share/AF1QipPWIl5X1N5If7p-nliUFVKTqMg0_6pf1ZOo35mXFjS8yJU5FT6H0WHoeCgsDu-Tvg?key=QUFxVEwtb0NPeFBXTTFCUGhBVTFuWUNsOEI4VS1R&pli=1)
+[[https://drive.google.com/file/d/1BgyUizkRiqfWBGjASC6d_A07pzCeuqgn/view?usp=sharing ](https://photos.google.com/share/AF1QipPWIl5X1N5If7p-nliUFVKTqMg0_6pf1ZOo35mXFjS8yJU5FT6H0WHoeCgsDu-Tvg?key=QUFxVEwtb0NPeFBXTTFCUGhBVTFuWUNsOEI4VS1R&pli=1)](https://drive.google.com/file/d/1YIivYtRBDaD1ZINDYJUz31EQzmn9CV4K/view?usp=sharing)
 
 
 3. How we used Cekura, Nemotron, and Pipecat
 Pipecat
+
 Pipecat is the full orchestration layer:
 Twilio / WebRTC → Nemotron STT → LLM context aggregator → Nemotron LLM → Gradium TTS → caller
+
 What we used and tuned:
 SileroVADAnalyzer with tuned params (confidence=0.8, min_volume=0.7, start_secs=0.3) — background noise on speakerphone calls was triggering false turns; Cekura tests helped us find the right thresholds
 FilterIncompleteUserTurnStrategies + MinWordsUserTurnStartStrategy(min_words=3) — while the bot is speaking, requires 3 words before treating input as a real interruption; eliminates most accidental barge-ins from ambient noise
 FunctionCallParams + register_direct_function for all 7 tools: list_bouquets, check_availability, add_to_order, get_order_summary, set_delivery_details, place_order, end_call
 on_client_connected to greet and kick off the conversation; on_client_disconnected to trigger the JSON write-back
 Nemotron
+
 STT: NVIDIA Nemotron Speech Streaming over WebSocket at 16 kHz
+
 LLM: Nemotron-3-Super-120B-A12B on the hackathon AWS endpoint
+
 We ran the same bot on GPT-4.1 (baseline) and Nemotron-3-Super with identical system prompts and tools, and used Cekura to measure task completion rates across both.
+
 Cekura
 What we were testing:
 Does the bot apply the right occasion filter (list_bouquets(occasion="birthday")) when the caller mentions an occasion, rather than reading 15 bouquets?
